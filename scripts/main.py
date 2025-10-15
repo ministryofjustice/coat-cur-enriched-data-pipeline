@@ -55,9 +55,6 @@ recent_billing_periods = [
     if parse_billing_period(bp) >= one_year_ago
 ]
 
-print(f"Found {len(recent_billing_periods)} billing periods within last year:")
-print(recent_billing_periods)
-
 # 4b. Create dictionary of partitions to add
 partitions_values = {}
 for billing_period in recent_billing_periods:
@@ -80,4 +77,4 @@ added_partitions_dict = wr.catalog.get_partitions(
 added_partitions_list = [item[0] for item in list(added_partitions_dict.values())]
 added_partitions_list.sort()
 print(f"Number of partitions added: {len(added_partitions_list)}")
-print(f"Latest partition: {added_partitions_list[-1]}")
+print(added_partitions_list)
