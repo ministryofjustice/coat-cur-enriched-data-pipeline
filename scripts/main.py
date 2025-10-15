@@ -1,5 +1,7 @@
 import awswrangler as wr
 import os
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 # Use this script to create a new table or to recreate an
 # existing table (overwrite).
@@ -15,7 +17,7 @@ database_name = "cloud_optimisation_and_accountability"
 if mode == "dev":
     table_name = "mojap_cur_data_dev"
 elif mode == "prod":
-    table_name = "mojap_cur_data"    
+    table_name = "mojap_cur_data"
 
 # 2. Read metadata information to get columns_types metadata in dict form: {'col0': 'bigint', 'col1': 'double'}
 # With dataset as true collects partitions_value
@@ -42,9 +44,23 @@ billing_period_list = list(set([object.removeprefix(prefix).split('/')[0] for ob
 billing_period_list.sort()
 # returns ['BILLING_PERIOD=2022-04',...,'BILLING_PERIOD=2025-08']
 
+# Filter out partitions beyond 1 year ago
+one_year_ago = datetime.now() - relativedelta(years=1)
+
+def parse_billing_period(bp):
+    return datetime.strptime(bp.split('=')[1], "%Y-%m")
+
+recent_billing_periods = [
+    bp for bp in billing_period_list
+    if parse_billing_period(bp) >= one_year_ago
+]
+
+print(f"Found {len(recent_billing_periods)} billing periods within last year:")
+print(recent_billing_periods)
+
 # 4b. Create dictionary of partitions to add
 partitions_values = {}
-for billing_period in billing_period_list:
+for billing_period in recent_billing_periods:
     key = prefix + billing_period + "/"
     value = [billing_period.split("=")[1]]
     partitions_values[key] = value
