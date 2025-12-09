@@ -11,7 +11,7 @@ def create_partition_map(path_to_partitions, partition_list):
     partitions_values = {}
 
     for billing_period in partition_list:
-        key = prefix + billing_period + "/"
+        key = path_to_partitions + billing_period + "/"
         value = [billing_period.split("=")[1]]
         partitions_values[key] = value
 
