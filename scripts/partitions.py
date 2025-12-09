@@ -7,7 +7,7 @@ def filter_billing_periods(billing_period_list, date_limit = datetime.now() - re
         if datetime.strptime(bp.split('=')[1], "%Y-%m") >= date_limit
     ]
 
-def create_partition_map(prefix, partition_list):
+def create_partition_map(path_to_partitions, partition_list):
     partitions_values = {}
 
     for billing_period in partition_list:
