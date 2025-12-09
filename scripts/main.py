@@ -1,6 +1,6 @@
 import awswrangler as wr
 import os
-from filter_partitions import filter_billing_periods
+from partitions import filter_billing_periods, create_partition_map
 
 mode = os.environ.get('MODE')
 
@@ -33,12 +33,7 @@ billing_period_list.sort()
 
 filter_billing_periods(billing_period_list)
 
-partitions_values = {}
-
-for billing_period in billing_period_list:
-    key = billing_period + "/"
-    value = [billing_period.split("=")[1]]
-    partitions_values[key] = value
+partitions_values = create_partition_map(billing_period_list)
 
 wr.catalog.add_parquet_partitions(
     database=database_name,
