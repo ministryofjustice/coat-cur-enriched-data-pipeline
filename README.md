@@ -6,7 +6,7 @@ The pipeline is comprised of a Python job than runs as a container on AP's Airfl
 
 The pipeline's purpose is to create an Athena table from the GreenOps S3 bucket in APDP, so that the data can be ingested by [CaDeT](https://github.com/moj-analytical-services/create-a-derived-table).
 
-# Releaseing a new version
+# Releasing a new version
 
 If the pipeline code is updated, you will need to make a new container release. To release a new container, we use GitHub's native [repository release system](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
 
