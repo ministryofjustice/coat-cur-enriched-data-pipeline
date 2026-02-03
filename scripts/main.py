@@ -21,9 +21,9 @@ billing_period_list = list(set([object.removeprefix(path_to_partitions).split('/
 
 billing_period_list.sort()
 
-filter_billing_periods(billing_period_list)
+billing_period_list_filtered = filter_billing_periods(billing_period_list)
 
-partitions_values = create_partition_map(path_to_partitions, billing_period_list)
+partitions_values = create_partition_map(path_to_partitions, billing_period_list_filtered)
 
 wr.catalog.add_parquet_partitions(
     database=database_name,
