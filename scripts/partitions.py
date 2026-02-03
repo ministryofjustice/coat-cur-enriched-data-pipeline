@@ -4,7 +4,7 @@ from dateutil.relativedelta import relativedelta
 def filter_billing_periods(billing_period_list, date_limit = datetime.now() - relativedelta(years=1)):
     folders_to_ignore = ["_staging"]
 
-    billing_period_list = [
+    return [
         bp for bp in billing_period_list
         if bp not in folders_to_ignore
         and datetime.strptime(bp.split('=')[1], "%Y-%m") >= date_limit
