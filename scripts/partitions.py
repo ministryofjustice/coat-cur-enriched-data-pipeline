@@ -2,9 +2,12 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 def filter_billing_periods(billing_period_list, date_limit = datetime.now() - relativedelta(years=1)):
+    folders_to_ignore = ["_staging"]
+
     billing_period_list = [
         bp for bp in billing_period_list
-        if datetime.strptime(bp.split('=')[1], "%Y-%m") >= date_limit
+        if bp not in folders_to_ignore
+        and datetime.strptime(bp.split('=')[1], "%Y-%m") >= date_limit
     ]
 
 def create_partition_map(path_to_partitions, partition_list):
