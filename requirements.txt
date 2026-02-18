@@ -1,2 +1,2 @@
 awswrangler==3.12.1
-pandas==2.3.2
+pandas==3.0.1
