@@ -1,6 +1,6 @@
 import awswrangler as wr
 from config import path_to_partitions, database_name, table_name
-from partitions import filter_billing_periods, create_partition_map
+from partitions import extract_billing_periods, filter_billing_periods, create_partition_map
 
 columns_types, partitions_types = wr.s3.read_parquet_metadata(path=path_to_partitions, dataset=True)
 
@@ -17,9 +17,7 @@ wr.catalog.create_parquet_table(
 
 s3_objects = wr.s3.list_objects(path_to_partitions)
 
-billing_period_list = list(set([object.removeprefix(path_to_partitions).split('/')[0] for object in s3_objects]))
-
-billing_period_list.sort()
+billing_period_list = extract_billing_periods(s3_objects, path_to_partitions)
 
 billing_period_list_filtered = filter_billing_periods(billing_period_list)
 

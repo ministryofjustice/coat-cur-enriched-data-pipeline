@@ -1,6 +1,14 @@
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+
+def extract_billing_periods(s3_objects, path_prefix):
+    return sorted(set(
+        obj.removeprefix(path_prefix).split('/')[0]
+        for obj in s3_objects
+    ))
+
+
 def filter_billing_periods(billing_period_list, date_limit = datetime.now() - relativedelta(years=1)):
     return [
         bp for bp in billing_period_list
