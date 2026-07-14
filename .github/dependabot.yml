@@ -6,6 +6,9 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
     commit-message:
       prefix: ":dependabot: github-actions"
       include: "scope"
@@ -20,6 +23,9 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
     commit-message:
       prefix: ":dependabot: pip"
       include: "scope"
