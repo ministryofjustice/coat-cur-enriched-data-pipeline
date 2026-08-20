@@ -1,10 +1,8 @@
 import awswrangler as wr
 from config import (
     path_to_partitions,
-    path_to_ai_partitions,
     database_name,
     table_name,
-    ai_table_name,
 )
 from partitions import extract_billing_periods, filter_billing_periods, create_partition_map
 
@@ -12,9 +10,7 @@ from partitions import extract_billing_periods, filter_billing_periods, create_p
 def build_enriched_table(path, database, table):
     """Create/overwrite a Glue external table for a billing-period dataset.
 
-    `path` must be the root that directly contains BILLING_PERIOD=YYYY-MM/
-    folders. The same routine serves both the standard enriched data and the
-    separate AI-usage data, which share an identical schema and partitioning.
+    `path` must be the root that directly contains BILLING_PERIOD=YYYY-MM/ folders.
     """
     columns_types, partitions_types = wr.s3.read_parquet_metadata(path=path, dataset=True)
 
@@ -44,8 +40,4 @@ def build_enriched_table(path, database, table):
     )
 
 
-# Standard enriched data — behaviour unchanged.
 build_enriched_table(path_to_partitions, database_name, table_name)
-
-# AI usage data — isolated in its own table, read from the _ai_data prefix.
-build_enriched_table(path_to_ai_partitions, database_name, ai_table_name)
