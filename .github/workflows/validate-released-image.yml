@@ -1,0 +1,297 @@
+---
+name: Validate Released Image
+
+on:
+  workflow_run:
+    workflows:
+      - Release Container
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Release tag to validate in ECR
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate-released-image:
+    name: AP Image Check (ECR)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || format('refs/tags/{0}', inputs.image_tag) }}
+          fetch-depth: 0
+
+      - name: Resolve Image Tag
+        id: resolve_image_tag
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            imageTag="${{ inputs.image_tag }}"
+          else
+            git fetch --tags --force
+            imageTag=$(git tag --points-at "${{ github.event.workflow_run.head_sha }}" | head -1)
+            if [[ -z "${imageTag}" ]]; then
+              imageTag="${{ github.event.workflow_run.head_branch }}"
+            fi
+          fi
+
+          if [[ -z "${imageTag}" ]]; then
+            echo "Could not resolve release tag"
+            exit 1
+          fi
+
+          echo "image-tag=${imageTag}" >> "${GITHUB_ENV}"
+          echo "Resolved image tag: ${imageTag}"
+
+      - name: Set Up Container Structure Test
+        uses: ministryofjustice/action-setup-container-structure-test@d0636fa19d04c3fc71c30ae4eb8da03be63dbd4b # v1.0.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          aws-region: eu-west-2
+          role-to-assume: arn:aws:iam::509399598587:role/ecr-access
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+
+      - name: Set ECR Repository
+        shell: bash
+        run: |
+          ecrRepository=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]' | sed 's/_/-/g')
+          echo "ecr-repository=${ecrRepository}" >> "${GITHUB_ENV}"
+
+      - name: Check Image Exists
+        id: check_image_exists
+        shell: bash
+        env:
+          ECR_REPOSITORY: ${{ env.ecr-repository }}
+          IMAGE_TAG: ${{ env.image-tag }}
+        run: |
+          aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}"
+
+      - name: Pull Image and Check Size
+        id: pull_image_and_check_size
+        shell: bash
+        env:
+          IMAGE: 509399598587.dkr.ecr.eu-west-2.amazonaws.com/${{ env.ecr-repository }}:${{ env.image-tag }}
+          THRESHOLD_GB: 4
+        run: |
+          docker pull "${IMAGE}"
+
+          imageSize=$(docker inspect "${IMAGE}" --format='{{.Size}}')
+          imageSizeGB=$((imageSize / 1024 / 1024 / 1024))
+          imageSizeMB=$((imageSize / 1024 / 1024))
+
+          echo "Image size in bytes: ${imageSize}"
+          echo "Image size in MB: ${imageSizeMB}"
+          echo "Image size in GB: ${imageSizeGB}"
+
+          if [[ "${imageSizeGB}" -gt "${THRESHOLD_GB}" ]]; then
+            echo "Image size (${imageSizeGB} GB) exceeds threshold (${THRESHOLD_GB} GB)"
+            echo "clean-runner=true" >> "${GITHUB_ENV}"
+            exit 1
+          fi
+
+          echo "Image size (${imageSizeGB} GB) is within threshold (${THRESHOLD_GB} GB)"
+          echo "clean-runner=false" >> "${GITHUB_ENV}"
+
+      - name: Clean Actions Runner
+        if: env.clean-runner == 'true'
+        uses: ministryofjustice/action-clean-runner@390530713a326ddc099b2114f38dd0f2f8eac6da # v1.1.0
+        with:
+          confirm: true
+
+      - name: Fetch Container Structure Test
+        shell: bash
+        run: |
+          curl --silent --show-error --location \
+            https://raw.githubusercontent.com/ministryofjustice/analytical-platform-airflow-github-actions/refs/heads/main/assets/container-structure-test/container-structure-test.yml \
+            --output container-structure-test.yml
+
+      - name: Container Structure Test
+        id: container_structure_test
+        shell: bash
+        env:
+          ECR_REPOSITORY: ${{ env.ecr-repository }}
+          IMAGE_TAG: ${{ env.image-tag }}
+        run: |
+          container-structure-test test \
+            --config container-structure-test.yml \
+            --image "509399598587.dkr.ecr.eu-west-2.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+      - name: Generate .grype.yml
+        id: generate_grype_yml
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          imageName=$(grep "^FROM" Dockerfile | cut -d' ' -f2 | cut -d':' -f1 | cut -d'@' -f1)
+          imageVersion=$(grep "^FROM" Dockerfile | cut -d':' -f2 | cut -d'@' -f1)
+          imageRepo=${imageName#ghcr.io/}
+
+          imageRepoLatestVersion=$(gh release list --repo "${imageRepo}" --exclude-drafts --exclude-pre-releases --json "isLatest,tagName" | jq -r '.[] | select(.isLatest == true) | .tagName')
+
+          echo "upstream-image-repo=${imageRepo}" >> "${GITHUB_ENV}"
+          echo "upstream-image-version=${imageRepoLatestVersion}" >> "${GITHUB_ENV}"
+
+          if [[ "${imageVersion}" != "${imageRepoLatestVersion}" ]]; then
+            echo "::warning::Dockerfile base image (${imageVersion}) does not match latest upstream (${imageRepoLatestVersion})"
+          fi
+
+          httpStatus=$(curl --silent --show-error --location \
+            --output runtime-grype.yml \
+            --write-out "%{http_code}" \
+            "https://raw.githubusercontent.com/${imageRepo}/refs/heads/main/.grype.yml")
+
+          if [[ "${httpStatus}" == "200" ]]; then
+            if [[ ! -f .grype.yml ]]; then
+              mv runtime-grype.yml .grype.yml
+            else
+              cat runtime-grype.yml >> .grype.yml
+            fi
+          elif [[ ! -f .grype.yml ]]; then
+            echo ".grype.yml not found in repository or upstream runtime image"
+            exit 1
+          fi
+
+      - name: Scan
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: 509399598587.dkr.ecr.eu-west-2.amazonaws.com/${{ env.ecr-repository }}:${{ env.image-tag }}
+          severity-cutoff: high
+          only-fixed: true
+          fail-build: false
+          output-format: sarif
+          output-file: result.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: result.sarif
+
+      - name: Process Scan Result
+        id: process_scan_result
+        shell: bash
+        run: |
+          print_findings() {
+            local title=$1
+            local findings=$2
+
+            if [[ -n "${findings}" ]]; then
+              echo "### ${title}"
+              echo ""
+              echo "${findings}"
+              echo ""
+            fi
+          }
+
+          SARIF=$(cat result.sarif)
+
+          RULE_SEVERITIES=$(echo "${SARIF}" | jq -c '
+            .runs[0].tool.driver.rules
+            | map({key: .id, value: (.properties["security-severity"] // "0" | tonumber)})
+            | from_entries
+          ')
+
+          CRITICAL_COUNT=$(echo "${SARIF}" | jq --argjson s "${RULE_SEVERITIES}" '
+            [.runs[0].results[] | select($s[.ruleId] >= 9.0)] | length
+          ')
+          HIGH_COUNT=$(echo "${SARIF}" | jq --argjson s "${RULE_SEVERITIES}" '
+            [.runs[0].results[] | select($s[.ruleId] >= 7.0 and $s[.ruleId] < 9.0)] | length
+          ')
+          TOTAL=$((CRITICAL_COUNT + HIGH_COUNT))
+
+          SCAN_OUTPUT=$({
+            echo "# Released Container Scan Summary"
+            echo ""
+            echo "Image tag: \`${{ env.image-tag }}\`"
+            echo ""
+
+            if [[ ${TOTAL} -eq 0 ]]; then
+              echo "✅ No fixable high or critical vulnerabilities found."
+            else
+              echo "${CRITICAL_COUNT} critical, ${HIGH_COUNT} high."
+              echo ""
+              echo "## Detailed Findings"
+              echo ""
+
+              get_findings() {
+                local min_score=$1
+                local max_score=$2
+                local severity=$3
+                echo "${SARIF}" | jq -r --argjson s "${RULE_SEVERITIES}" \
+                  --argjson min "${min_score}" --argjson max "${max_score}" \
+                  --arg severity "${severity}" '
+                  (.runs[0].tool.driver.rules
+                  | map({
+                      key: .id,
+                      value: (
+                        .help.text
+                        | split("\n")
+                        | map(select(startswith("Fix Version: ")))
+                        | if length > 0 then .[0] | ltrimstr("Fix Version: ") | split(",") | first else "" end
+                      )
+                    })
+                  | from_entries) as $fix_versions
+                  | def advisory_line:
+                      (try (.ruleId | capture("^(?<id>CVE-[0-9]+-[0-9]+|GHSA-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+)") | .id) // .ruleId) as $id
+                      | (if ($id | startswith("CVE-")) then "https://nvd.nist.gov/vuln/detail/\($id)"
+                         elif ($id | startswith("GHSA-")) then "https://github.com/advisories/\($id)"
+                         else "" end) as $url
+                      | (($fix_versions[.ruleId] // "") | if . != "" then " (fixed in \(.))" else "" end) as $fix
+                      | (if (.message.text | test("^A [A-Za-z]+ vulnerability"))
+                         then (.message.text | sub("^A [A-Za-z]+ vulnerability"; "A \($severity) vulnerability"))
+                         else "A \($severity) vulnerability: \(.message.text)"
+                         end) as $text
+                      | if $url != "" then "- [\($id)](\($url)) - \($text)\($fix)"
+                        else "- \(.ruleId) - \($text)\($fix)"
+                        end;
+                  .runs[0].results[]
+                  | select($s[.ruleId] >= $min and $s[.ruleId] < $max)
+                  | advisory_line
+                '
+              }
+
+              CRITICAL_FINDINGS=$(get_findings 9.0 10.1 "critical")
+              HIGH_FINDINGS=$(get_findings 7.0 9.0 "high")
+
+              print_findings "Critical" "${CRITICAL_FINDINGS}"
+              print_findings "High" "${HIGH_FINDINGS}"
+            fi
+          })
+
+          echo "${SCAN_OUTPUT}"
+          echo "${SCAN_OUTPUT}" >> "${GITHUB_STEP_SUMMARY}"
+          {
+            echo "critical-count=${CRITICAL_COUNT}"
+            echo "high-count=${HIGH_COUNT}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Fail Build on Findings
+        if: |
+          steps.process_scan_result.outputs.critical-count > 0 ||
+          steps.process_scan_result.outputs.high-count > 0
+        shell: bash
+        env:
+          CRITICAL_COUNT: ${{ steps.process_scan_result.outputs.critical-count }}
+          HIGH_COUNT: ${{ steps.process_scan_result.outputs.high-count }}
+        run: |
+          echo "Build failed - found ${CRITICAL_COUNT} critical and ${HIGH_COUNT} high severity fixable vulnerabilities"
+          exit 1
