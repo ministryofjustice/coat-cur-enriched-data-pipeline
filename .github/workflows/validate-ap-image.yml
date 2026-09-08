@@ -13,7 +13,6 @@ jobs:
     name: AP Image Check (pre-release)
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       id-token: write
       pull-requests: write
@@ -44,16 +43,12 @@ jobs:
           imageSizeGB=$((imageSize / 1024 / 1024 / 1024))
           imageSizeMB=$((imageSize / 1024 / 1024))
 
-          echo "Image size in bytes: ${imageSize}"
-          echo "Image size in MB: ${imageSizeMB}"
-          echo "Image size in GB: ${imageSizeGB}"
+          echo "Image size: ${imageSizeMB} MB (${imageSizeGB} GB)"
 
           if [[ "${imageSizeGB}" -gt "${THRESHOLD_GB}" ]]; then
             echo "Image size (${imageSizeGB} GB) exceeds threshold (${THRESHOLD_GB} GB)"
             exit 1
           fi
-
-          echo "Image size (${imageSizeGB} GB) is within threshold (${THRESHOLD_GB} GB)"
 
       - name: Check Base Image Version
         id: check_base_image_version
@@ -65,20 +60,19 @@ jobs:
           imageVersion=$(grep "^FROM" Dockerfile | cut -d':' -f2 | cut -d'@' -f1)
           imageRepo=${imageName#ghcr.io/}
 
-          imageRepoLatestVersion=$(gh release list --repo "${imageRepo}" --exclude-drafts --exclude-pre-releases --json "isLatest,tagName" | jq -r '.[] | select(.isLatest == true) | .tagName')
+          latestVersion=$(gh release list --repo "${imageRepo}" --exclude-drafts --exclude-pre-releases --json "isLatest,tagName" | jq -r '.[] | select(.isLatest == true) | .tagName')
 
-          echo "upstream-image-repo=${imageRepo}" >> "${GITHUB_ENV}"
-          echo "upstream-image-version=${imageRepoLatestVersion}" >> "${GITHUB_ENV}"
-          echo "dockerfile-image-version=${imageVersion}" >> "${GITHUB_ENV}"
+          {
+            echo "upstream-image-repo=${imageRepo}"
+            echo "upstream-image-version=${latestVersion}"
+          } >> "${GITHUB_ENV}"
 
-          if [[ "${imageVersion}" != "${imageRepoLatestVersion}" ]]; then
-            echo "Image version (${imageVersion}) does not match latest upstream (${imageRepoLatestVersion})"
-            echo "image-version-match=false" >> "${GITHUB_ENV}"
+          if [[ "${imageVersion}" != "${latestVersion}" ]]; then
+            echo "Image version (${imageVersion}) does not match latest upstream (${latestVersion})"
             exit 1
           fi
 
-          echo "Image version (${imageVersion}) matches latest upstream (${imageRepoLatestVersion})"
-          echo "image-version-match=true" >> "${GITHUB_ENV}"
+          echo "Image version (${imageVersion}) matches latest upstream (${latestVersion})"
 
       - name: Comment on Image Size Failure
         if: failure() && steps.check_image_size.outcome == 'failure'
